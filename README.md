@@ -1,4 +1,6 @@
-# insurance-claims-ai
+# claims-ai
+
+[![CI](https://github.com/venkatkota2/claims-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/venkatkota2/claims-ai/actions/workflows/ci.yml)
 
 An end-to-end insurance claims operations project combining synthetic relational data, SQL analytics, delay-risk modelling, monitoring, and human-review controls.
 
@@ -20,8 +22,8 @@ The model predicts whether an open claim is at risk of exceeding its service tar
 - Optional XGBoost estimator behind the same interface.
 - Time-based train/test split to reduce look-ahead leakage.
 - ROC AUC, average precision, Brier score, and threshold diagnostics.
-- Population Stability Index and segment-level performance monitoring.
-- Open-claim-only human-review queue for high delay risk, severe claims, existing referral flags, and missing documents.
+- Population Stability Index with an explicit stable/monitor/investigate signal, plus segment-level performance monitoring.
+- Open-claim-only human-review queue for high delay risk, claims already past target, severe claims, existing referral flags, and missing documents.
 - Generated model card documenting intended use and prohibited uses.
 
 ## Quick start
@@ -69,6 +71,10 @@ only records eligible for the operational review queue. Activity and payment
 features are calculated at each record's snapshot date to avoid using future
 events.
 
+The SQL files target PostgreSQL and mirror the generated source-table contract.
+Operational queries bind an `:as_of_date` parameter so a historical snapshot
+does not silently age with the wall clock.
+
 ## Responsible-use design
 
 The predictor is limited to operational delay. Protected characteristics are not generated or used. Region and channel are retained because they describe operating processes, but their segment metrics are monitored. Predictions never automatically change coverage, reserve, settlement, investigation, fraud status, or customer eligibility. Feature importance is model association, not a causal explanation. Every queued claim remains a human decision.
@@ -87,4 +93,4 @@ tests/                        data, model, and control tests
 
 ## Limitations
 
-All data are synthetic. Reported performance demonstrates the pipeline, not expected insurer performance. This is not a coverage, fraud, reserve, settlement, denial, or eligibility model. A real deployment would require privacy review, target and feature validation, temporal back-testing, calibration, fairness review, change control, access controls, and ongoing human oversight.
+All data are synthetic. Reported performance demonstrates the pipeline, not expected insurer performance. Training only on observed closed claims can create right-censoring and closure-selection bias; a real implementation needs a formally matured outcome window or survival/event framework. This is not a coverage, fraud, reserve, settlement, denial, or eligibility model. A real deployment would also require privacy review, target and feature validation, temporal back-testing, calibration, fairness review, change control, access controls, and ongoing human oversight.

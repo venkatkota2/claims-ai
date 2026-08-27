@@ -21,7 +21,10 @@ def main() -> None:
     for name, value in asdict(result.metrics).items():
         print(f"  {name:28s} {value:.4f}")
     print(f"review queue                 {len(result.review_queue):,} claims")
-    print(f"train-to-open score PSI      {result.monitoring['train_to_open_score_psi']:.4f}")
+    print(
+        f"train-to-open score PSI      {result.monitoring['train_to_open_score_psi']:.4f} "
+        f"({result.monitoring['train_to_open_score_psi_status']})"
+    )
     print("top model features")
     print(result.model.feature_importance().head(8).to_string(index=False))
 

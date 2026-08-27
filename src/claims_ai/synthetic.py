@@ -27,7 +27,7 @@ def _require_columns(frame: pd.DataFrame, columns: set[str], table: str) -> None
 
 def generate_policies(count: int, *, seed: int = 42) -> pd.DataFrame:
     """Generate stable policy-level attributes."""
-    if count <= 0:
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
         raise ValueError("policy count must be positive")
     rng = np.random.default_rng(seed)
     lines = rng.choice(["auto", "property", "liability"], count, p=[0.52, 0.31, 0.17])
@@ -66,13 +66,15 @@ def generate_claims(
         {"policy_id", "line_of_business", "region", "coverage_limit"},
         "policies",
     )
-    if count < 100:
+    if not isinstance(count, int) or isinstance(count, bool) or count < 100:
         raise ValueError("claim count must be at least 100")
     if policies.empty or not policies["policy_id"].is_unique:
         raise ValueError("policies must contain unique rows")
 
     rng = np.random.default_rng(seed)
     as_of = pd.Timestamp(as_of_date)
+    if pd.isna(as_of):
+        raise ValueError("as_of_date must be a valid timestamp")
     selected = policies.iloc[rng.integers(0, len(policies), count)].reset_index(drop=True)
     lines = selected["line_of_business"].to_numpy()
     regions = selected["region"].to_numpy()

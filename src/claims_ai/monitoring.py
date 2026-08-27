@@ -15,7 +15,17 @@ def population_stability_index(
 ) -> float:
     reference = np.asarray(reference, dtype=float)
     current = np.asarray(current, dtype=float)
-    if len(reference) == 0 or len(current) == 0 or bins < 2:
+    if (
+        reference.ndim != 1
+        or current.ndim != 1
+        or len(reference) == 0
+        or len(current) == 0
+        or not np.all(np.isfinite(reference))
+        or not np.all(np.isfinite(current))
+        or not isinstance(bins, int)
+        or isinstance(bins, bool)
+        or bins < 2
+    ):
         raise ValueError("PSI requires non-empty samples and at least two bins")
     edges = np.unique(np.quantile(reference, np.linspace(0, 1, bins + 1)))
     if len(edges) < 3:
@@ -39,8 +49,23 @@ def segment_performance(
 ) -> pd.DataFrame:
     if segment not in claims:
         raise ValueError(f"unknown segment: {segment}")
+    if "delay_flag" not in claims:
+        raise ValueError("segment performance requires delay_flag")
+    probabilities = np.asarray(probability, dtype=float)
+    if (
+        probabilities.ndim != 1
+        or len(probabilities) != len(claims)
+        or not np.all(np.isfinite(probabilities))
+        or np.any((probabilities < 0) | (probabilities > 1))
+        or not np.isfinite(threshold)
+        or not 0 < threshold < 1
+    ):
+        raise ValueError("invalid segment probabilities or threshold")
+    labels = claims["delay_flag"]
+    if labels.isna().any() or not set(labels.unique()) <= {0, 1}:
+        raise ValueError("segment labels must be binary and non-missing")
     frame = claims[[segment, "delay_flag"]].copy()
-    frame["probability"] = np.asarray(probability)
+    frame["probability"] = probabilities
     rows = []
     for name, group in frame.groupby(segment, dropna=False):
         auc = (

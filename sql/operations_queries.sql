@@ -2,9 +2,9 @@
 SELECT
     p.line_of_business,
     COUNT(*) AS open_claims,
-    AVG(CURRENT_DATE - CAST(c.reported_at AS DATE)) AS average_open_days,
+    AVG(CAST(:as_of_date AS DATE) - CAST(c.reported_at AS DATE)) AS average_open_days,
     SUM(CASE
-        WHEN CURRENT_DATE - CAST(c.reported_at AS DATE) > c.target_days THEN 1 ELSE 0
+        WHEN CAST(:as_of_date AS DATE) - CAST(c.reported_at AS DATE) > c.target_days THEN 1 ELSE 0
     END) AS claims_past_target
 FROM claims c
 JOIN policies p ON p.policy_id = c.policy_id
@@ -23,7 +23,8 @@ JOIN policies p ON p.policy_id = c.policy_id
 LEFT JOIN claim_activities a ON a.claim_id = c.claim_id
 WHERE c.closed_at IS NULL
 GROUP BY c.claim_id, p.line_of_business, c.severity_estimate
-HAVING MAX(a.activity_at) IS NULL OR MAX(a.activity_at) < CURRENT_TIMESTAMP - INTERVAL '7 days'
+HAVING MAX(a.activity_at) IS NULL
+    OR MAX(a.activity_at) < CAST(:as_of_date AS TIMESTAMP) - INTERVAL '7 days'
 ORDER BY c.severity_estimate DESC;
 
 -- Closed-claim cycle time and paid severity by operating segment.
@@ -43,4 +44,3 @@ LEFT JOIN (
 WHERE c.closed_at IS NOT NULL
 GROUP BY p.region, c.channel
 ORDER BY average_cycle_days DESC;
-

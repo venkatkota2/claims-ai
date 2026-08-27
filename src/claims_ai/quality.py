@@ -34,6 +34,8 @@ def _require_columns(frame: pd.DataFrame, required: set[str], table: str) -> Non
 
 def run_quality_checks(data: SyntheticClaimsData) -> list[QualityCheck]:
     """Validate relational integrity, operational dates, amounts, and features."""
+    if pd.isna(data.as_of_date):
+        raise ValueError("as_of_date must be a valid timestamp")
     policies, claims = data.policies, data.claims
     activities, payments = data.activities, data.payments
     _require_columns(
@@ -51,6 +53,10 @@ def run_quality_checks(data: SyntheticClaimsData) -> list[QualityCheck]:
             "snapshot_at",
             "severity_estimate",
             "settlement_amount",
+            "missing_documents",
+            "adjuster_open_load",
+            "fraud_indicator",
+            "complexity_score",
             "target_days",
             "cycle_time_days",
             "closed_flag",
@@ -114,6 +120,26 @@ def run_quality_checks(data: SyntheticClaimsData) -> list[QualityCheck]:
                 & claim_policy["settlement_amount"].between(
                     0, claim_policy["coverage_limit"], inclusive="both"
                 ),
+                len(claims),
+            ),
+            _check(
+                "closed_flag_binary",
+                claims["closed_flag"].isin([0, 1]),
+                len(claims),
+            ),
+            _check(
+                "target_days_positive",
+                np.isfinite(claims["target_days"]) & (claims["target_days"] > 0),
+                len(claims),
+            ),
+            _check(
+                "delay_flag_binary_when_labeled",
+                claims["delay_flag"].isna() | claims["delay_flag"].isin([0, 1]),
+                len(claims),
+            ),
+            _check(
+                "open_settlement_unset",
+                (claims["closed_flag"] == 1) | (claims["settlement_amount"] == 0),
                 len(claims),
             ),
             _check(
@@ -200,6 +226,14 @@ def run_quality_checks(data: SyntheticClaimsData) -> list[QualityCheck]:
             "closed_payments_match_settlement",
             np.isclose(closed_paid, closed["settlement_amount"], atol=0.01),
             len(closed),
+        )
+    )
+    all_paid = claims["claim_id"].map(paid).fillna(0.0)
+    results.append(
+        _check(
+            "payments_within_coverage",
+            all_paid.to_numpy() <= claim_policy["coverage_limit"].to_numpy() + 0.01,
+            len(claims),
         )
     )
 
