@@ -13,12 +13,13 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-
 NUMERIC_FEATURES = [
     "coverage_limit",
     "severity_estimate",
     "activity_count_7d",
     "days_since_last_activity",
+    "payments_to_date",
+    "claim_age_days",
     "missing_documents",
     "adjuster_open_load",
     "fraud_indicator",
@@ -36,11 +37,17 @@ class ModelMetrics:
     positive_rate: float
     review_rate_at_threshold: float
     recall_at_threshold: float
+    precision_at_threshold: float
 
 
-def temporal_split(claims: pd.DataFrame, test_fraction: float = 0.25) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not 0.1 <= test_fraction <= 0.5:
+def temporal_split(
+    claims: pd.DataFrame, test_fraction: float = 0.25
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not np.isfinite(test_fraction) or not 0.1 <= test_fraction <= 0.5:
         raise ValueError("test_fraction must be between 0.1 and 0.5")
+    _require_columns(claims, ["reported_at", "claim_id"])
+    if claims.empty or claims["reported_at"].isna().any():
+        raise ValueError("temporal split requires dated claims")
     ordered = claims.sort_values(["reported_at", "claim_id"]).reset_index(drop=True)
     cut = int(len(ordered) * (1.0 - test_fraction))
     if cut == 0 or cut == len(ordered):
@@ -50,14 +57,16 @@ def temporal_split(claims: pd.DataFrame, test_fraction: float = 0.25) -> tuple[p
 
 def _estimator(kind: str, random_state: int):
     if kind == "logistic":
-        return LogisticRegression(max_iter=1_000, class_weight="balanced", random_state=random_state)
+        return LogisticRegression(
+            max_iter=1_000, class_weight="balanced", random_state=random_state
+        )
     if kind == "xgboost":
         try:
             from xgboost import XGBClassifier
         except ImportError as error:
             raise ImportError("install the 'xgboost' optional dependency") from error
         return XGBClassifier(
-            n_estimators=250,
+            n_estimators=100,
             max_depth=4,
             learning_rate=0.04,
             subsample=0.85,
@@ -80,7 +89,10 @@ class DelayRiskModel:
             ]
         )
         transform = ColumnTransformer(
-            [("numeric", numeric, NUMERIC_FEATURES), ("categorical", categorical, CATEGORICAL_FEATURES)]
+            [
+                ("numeric", numeric, NUMERIC_FEATURES),
+                ("categorical", categorical, CATEGORICAL_FEATURES),
+            ]
         )
         self.estimator_name = estimator
         self.pipeline = Pipeline(
@@ -88,8 +100,10 @@ class DelayRiskModel:
         )
         self.fitted = False
 
-    def fit(self, claims: pd.DataFrame) -> "DelayRiskModel":
-        _require_columns(claims, MODEL_FEATURES + ["delay_flag"])
+    def fit(self, claims: pd.DataFrame) -> DelayRiskModel:
+        _require_columns(claims, [*MODEL_FEATURES, "delay_flag"])
+        if claims["delay_flag"].isna().any() or not set(claims["delay_flag"].unique()) <= {0, 1}:
+            raise ValueError("training labels must be binary and non-missing")
         if claims["delay_flag"].nunique() < 2:
             raise ValueError("training data must contain both target classes")
         self.pipeline.fit(claims[MODEL_FEATURES], claims["delay_flag"])
@@ -112,8 +126,13 @@ class DelayRiskModel:
             if hasattr(estimator, "coef_")
             else estimator.feature_importances_
         )
+        interpretation = (
+            "absolute standardized coefficient association"
+            if hasattr(estimator, "coef_")
+            else "estimator feature importance association"
+        )
         return (
-            pd.DataFrame({"feature": names, "importance": values})
+            pd.DataFrame({"feature": names, "importance": values, "interpretation": interpretation})
             .sort_values("importance", ascending=False)
             .reset_index(drop=True)
         )
@@ -131,15 +150,33 @@ def evaluate_predictions(
     *,
     threshold: float = 0.70,
 ) -> ModelMetrics:
-    actual_array = np.asarray(actual, dtype=int)
+    actual_values = np.asarray(actual)
     probability_array = np.asarray(probability, dtype=float)
-    if len(actual_array) != len(probability_array) or len(actual_array) == 0:
+    if actual_values.ndim != 1 or probability_array.ndim != 1:
+        raise ValueError("actual and probability must be one-dimensional")
+    if len(actual_values) != len(probability_array) or len(actual_values) == 0:
         raise ValueError("actual and probability must have the same non-zero length")
-    if not 0 < threshold < 1 or np.any((probability_array < 0) | (probability_array > 1)):
+    try:
+        actual_numeric = actual_values.astype(float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("actual labels must be numeric and binary") from error
+    if not np.all(np.isfinite(actual_numeric)) or not set(np.unique(actual_numeric)) <= {0.0, 1.0}:
+        raise ValueError("actual labels must be finite and binary")
+    actual_array = actual_numeric.astype(int)
+    if not np.all(np.isfinite(probability_array)):
+        raise ValueError("probabilities must be finite")
+    if len(np.unique(actual_array)) < 2:
+        raise ValueError("evaluation requires both target classes for ROC AUC")
+    if (
+        not np.isfinite(threshold)
+        or not 0 < threshold < 1
+        or np.any((probability_array < 0) | (probability_array > 1))
+    ):
         raise ValueError("invalid probability or threshold")
     reviewed = probability_array >= threshold
     positives = actual_array == 1
     recall = float(np.sum(reviewed & positives) / max(1, np.sum(positives)))
+    precision = float(np.sum(reviewed & positives) / max(1, np.sum(reviewed)))
     return ModelMetrics(
         roc_auc=float(roc_auc_score(actual_array, probability_array)),
         average_precision=float(average_precision_score(actual_array, probability_array)),
@@ -147,5 +184,5 @@ def evaluate_predictions(
         positive_rate=float(np.mean(positives)),
         review_rate_at_threshold=float(np.mean(reviewed)),
         recall_at_threshold=recall,
+        precision_at_threshold=precision,
     )
-

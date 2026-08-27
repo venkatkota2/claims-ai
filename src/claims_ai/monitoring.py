@@ -25,7 +25,9 @@ def population_stability_index(
     current_share = np.histogram(current, bins=edges)[0] / len(current)
     reference_share = np.clip(reference_share, 1e-6, None)
     current_share = np.clip(current_share, 1e-6, None)
-    return float(np.sum((current_share - reference_share) * np.log(current_share / reference_share)))
+    return float(
+        np.sum((current_share - reference_share) * np.log(current_share / reference_share))
+    )
 
 
 def segment_performance(
@@ -57,4 +59,3 @@ def segment_performance(
             }
         )
     return pd.DataFrame(rows).sort_values(segment).reset_index(drop=True)
-
