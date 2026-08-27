@@ -65,3 +65,16 @@ def test_quality_checks_detect_foreign_key_and_financial_exceptions():
     assert checks["payment_claim_foreign_key"].failure_count == 1
     assert not checks["settlement_within_coverage"].passed
     assert checks["settlement_within_coverage"].failure_count == 1
+
+
+def test_quality_checks_detect_invalid_open_settlement_and_target():
+    data = generate_synthetic_data(200, seed=13)
+    claims = data.claims.copy()
+    open_index = claims.index[claims["closed_flag"] == 0][0]
+    claims.loc[open_index, "settlement_amount"] = 1.0
+    claims.loc[open_index, "target_days"] = 0
+
+    checks = {check.rule: check for check in run_quality_checks(replace(data, claims=claims))}
+
+    assert not checks["open_settlement_unset"].passed
+    assert not checks["target_days_positive"].passed

@@ -42,12 +42,16 @@ def build_review_queue(
         raise ValueError("probabilities must be a finite vector within [0, 1]")
     if not np.isfinite(risk_threshold) or not 0 < risk_threshold < 1:
         raise ValueError("risk_threshold must be between zero and one")
+    if not np.isfinite(severity_threshold) or severity_threshold < 0:
+        raise ValueError("severity_threshold must be finite and non-negative")
     required = {
         "claim_id",
         "closed_flag",
         "line_of_business",
         "region",
         "severity_estimate",
+        "claim_age_days",
+        "target_days",
         "days_since_last_activity",
         "missing_documents",
         "fraud_indicator",
@@ -64,6 +68,8 @@ def build_review_queue(
         row_reasons = []
         if row.delay_risk_score >= risk_threshold:
             row_reasons.append("high_delay_risk")
+        if row.claim_age_days > row.target_days:
+            row_reasons.append("past_service_target")
         if row.severity_estimate >= severity_threshold:
             row_reasons.append("high_severity")
         if row.fraud_indicator == 1:
@@ -75,6 +81,7 @@ def build_review_queue(
     queue = frame[frame["review_reasons"] != ""].copy()
     queue["priority_score"] = (
         queue["delay_risk_score"]
+        + 0.25 * (queue["claim_age_days"] > queue["target_days"])
         + 0.15 * (queue["severity_estimate"] >= severity_threshold)
         + 0.20 * queue["fraud_indicator"]
     )
@@ -84,6 +91,8 @@ def build_review_queue(
         "line_of_business",
         "region",
         "severity_estimate",
+        "claim_age_days",
+        "target_days",
         "days_since_last_activity",
         "delay_risk_score",
         "review_reasons",
@@ -111,7 +120,9 @@ def _model_card(estimator: str, metrics: ModelMetrics, training_rows: int) -> di
             "fraud determinations",
         ],
         "limitations": (
-            "Trained entirely on synthetic data; results do not estimate real performance."
+            "Trained entirely on synthetic closed claims; results do not estimate real "
+            "performance and closed-only labels are vulnerable to right-censoring and "
+            "closure-selection bias."
         ),
     }
 
@@ -142,8 +153,13 @@ def run_workflow(
     open_probability = model.predict_proba(current_open)
     metrics = evaluate_predictions(test["delay_flag"], test_probability, threshold=risk_threshold)
     queue = build_review_queue(current_open, open_probability, risk_threshold=risk_threshold)
+    score_psi = population_stability_index(train_probability, open_probability)
+    score_psi_status = (
+        "stable" if score_psi < 0.10 else "monitor" if score_psi < 0.25 else "investigate"
+    )
     monitoring: dict[str, object] = {
-        "train_to_open_score_psi": population_stability_index(train_probability, open_probability),
+        "train_to_open_score_psi": score_psi,
+        "train_to_open_score_psi_status": score_psi_status,
         "evaluation_region": segment_performance(
             test, test_probability, segment="region", threshold=risk_threshold
         ),
